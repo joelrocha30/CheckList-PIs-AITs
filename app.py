@@ -34,13 +34,13 @@ CAMPOS_CHECKLIST = [
     },
     {
         "id": "pi", 
-        "label": "Pedido de Indisponibilidade", 
+        "label": "PI -Pedido de Indisponibilidade", 
         "tipo": "selecao", 
         "opcoes": ["Não Feito", "Feito e Guardado", "Feito e Submetido", "Feito e Aprovado"]
     },
     {
         "id": "pit", 
-        "label": "Pedido de Intervenção em Tensão", 
+        "label": "PIT -Pedido de Intervenção em Tensão", 
         "tipo": "selecao", 
         "opcoes": ["Não Feito", "Feito e Guardado", "Feito e Submetido", "Feito e Aprovado"]
     },
