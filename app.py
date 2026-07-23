@@ -5,7 +5,7 @@ from datetime import datetime
 
 # Configuração da página
 st.set_page_config(
-    page_title="CHECKLIST DE PIs / AITs - E-REDES",
+    page_title="CHECKLIST DE PIs/AITs - E-REDES",
     page_icon="⚡",
     layout="wide"
 )
@@ -22,7 +22,7 @@ CAMPOS_CHECKLIST = [
     },
     {
         "id": "rc", 
-        "label": "RC (Responsável pelos Trabalhos / Condução)", 
+        "label": "RC (Responsável de Trabalhos)", 
         "tipo": "texto",
         "placeholder": "Nome da pessoa..."
     },
@@ -30,25 +30,31 @@ CAMPOS_CHECKLIST = [
         "id": "obra_dm", 
         "label": "Obra DM", 
         "tipo": "texto",
-        "placeholder": "Indique a referência / código..."
+        "placeholder": "Número da Obra DM"
     },
     {
         "id": "pi", 
         "label": "Pedido de Indisponibilidade", 
         "tipo": "selecao", 
-        "opcoes": ["Feito e Guardado", "Feito e Submetido", "Feito e Aprovado"]
+        "opcoes": ["Não Feito", "Feito e Guardado", "Feito e Submetido", "Feito e Aprovado"]
     },
     {
         "id": "pit", 
         "label": "Pedido de Intervenção em Tensão", 
         "tipo": "selecao", 
-        "opcoes": ["Feito e Guardado", "Feito e Submetido", "Feito e Aprovado"]
+        "opcoes": ["Não Feito", "Feito e Guardado", "Feito e Submetido", "Feito e Aprovado"]
     },
     {
         "id": "clientes", 
-        "label": "Clientes Afetados?", 
+        "label": "PTC Afetados?", 
         "tipo": "selecao", 
-        "opcoes": ["Não", "Sim - MT", "Sim - BT", "Sim - MT e BT"]
+        "opcoes": ["Não", "Sim, Não foram contactados", "Sim, Já foram contactados"]
+    },
+    {
+        "id": "geradores", 
+        "label": "Tem Geradores?", 
+        "tipo": "selecao", 
+        "opcoes": ["Não", "Sim"]
     },
     {
         "id": "croqui_celas", 
