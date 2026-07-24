@@ -117,7 +117,7 @@ if st.session_state.ptd_selecionado is None:
     # Novo Registo
     with st.expander("➕ REGISTAR NOVA OBRA", expanded=False):
         c1, c2, c3, c4 = st.columns([2, 1, 1, 1])
-        nome_ptd = c1.text_input("Nome PTD / PS", placeholder="Ex: PTD FLG 0266")
+        nome_ptd = c1.text_input("Nome da Obra", placeholder="Ex: PTD FLG 0266")
         dt_corte = c2.date_input("Data do Corte", value=datetime.now().date())
         
         dp_app = c3.selectbox("Descargas Parciais?", ["Aplicável", "Não Aplicável"])
