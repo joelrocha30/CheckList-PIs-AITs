@@ -100,7 +100,7 @@ if "ptd_selecionado" not in st.session_state:
 db = st.session_state.db_ptd
 
 # Barra Lateral
-st.sidebar.title("⚡ CHECKLIST DE PIs / AITs")
+st.sidebar.title("⚡ Lista de Obras")
 st.sidebar.markdown("**Fiscal:** Joel Machado Rocha")
 
 if st.session_state.ptd_selecionado:
@@ -111,11 +111,11 @@ if st.session_state.ptd_selecionado:
 # --- ECRÃ 1: HISTÓRICO DE OBRAS ---
 if st.session_state.ptd_selecionado is None:
     st.title("📂 CHECKLIST DE PIs / AITs - Registos")
-    st.subheader("Selecione um PTD/PS existente ou inicie um novo processo")
+    st.subheader("Selecione uma Obra ou Crie uma nova")
     st.markdown("---")
 
     # Novo Registo
-    with st.expander("➕ REGISTAR NOVO PTD / PS", expanded=False):
+    with st.expander("➕ REGISTAR NOVA OBRA", expanded=False):
         c1, c2, c3, c4 = st.columns([2, 1, 1, 1])
         nome_ptd = c1.text_input("Nome PTD / PS", placeholder="Ex: PTD FLG 0266")
         dt_corte = c2.date_input("Data do Corte", value=datetime.now().date())
@@ -125,9 +125,9 @@ if st.session_state.ptd_selecionado is None:
 
         if st.button("Criar Registo", type="primary"):
             if not nome_ptd.strip():
-                st.error("Escreva o Nome do PTD/PS.")
+                st.error("Escreva o Nome da Obra e/ou PTD/PS.")
             elif nome_ptd in db:
-                st.error("Já existe um registo com este Nome PTD/PS!")
+                st.error("Já existe um registo com esta Obra!")
             else:
                 db[nome_ptd] = criar_novo_ptd(nome_ptd, dt_corte, dp_app, dt_dp)
                 guardar_dados(db)
@@ -136,7 +136,7 @@ if st.session_state.ptd_selecionado is None:
 
     st.markdown("### 🏬 Histórico de Intervenções")
     if not db:
-        st.info("Nenhum PTD/PS registado. Clique no botão acima para adicionar.")
+        st.info("Nenhum Obra registada. Clique no botão acima para adicionar.")
     else:
         for ptd_key, ptd_data in list(db.items()):
             meta = ptd_data["metadados"]
