@@ -158,7 +158,7 @@ if st.session_state.ptd_selecionado is None:
                         guardar_dados(db)
                         st.rerun()
 
-# --- ECRÃ 2: FICHA DE CAMPO DO PTD/PS ---
+# --- ECRÃ 2: FICHA DA OBRA ---
 else:
     ptd_key = st.session_state.ptd_selecionado
     ptd_obj = db[ptd_key]
@@ -172,7 +172,7 @@ else:
     # Cabeçalho com Datas e Opção de Descargas Parciais
     with st.container(border=True):
         c_m1, c_m2, c_m3, c_m4 = st.columns([2, 2, 1.5, 2])
-        c_m1.markdown(f"**Nome PTD/PS:** `{meta['nome_ptd']}`")
+        c_m1.markdown(f"**Nome da Obra:** `{meta['nome_ptd']}`")
 
         # Ajuste de Data do Corte
         dt_corte_val = datetime.strptime(meta["data_corte"], "%Y-%m-%d").date()
