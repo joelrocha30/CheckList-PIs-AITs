@@ -22,19 +22,27 @@ CAMPOS_CHECKLIST = [
     {"id": "croqui_celas", "label": "Croqui para Identificação das Celas", "tipo": "selecao", "opcoes": ["Não Feito", "Feito", "Feito e Enviado"]}
 ]
 
-# Ligação ao Google Sheets
+# Inicializar Ligação ao Google Sheets
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# Carregar Dados da Nuvem
-try:
-    df_obras = conn.read(worksheet="Obras", ttl=2)
-    df_respostas = conn.read(worksheet="Respostas", ttl=2)
-except Exception:
-    df_obras = pd.DataFrame(columns=["nome_ptd", "data_corte", "dp_aplicavel", "data_descargas_parciais"])
-    df_respostas = pd.DataFrame(columns=["nome_ptd", "campo_id", "valor", "observacoes"])
+# Função para carregar dados de forma segura
+def carregar_dados():
+    try:
+        df_o = conn.read(worksheet="Obras", ttl=0)
+    except Exception:
+        df_o = pd.DataFrame(columns=["nome_ptd", "data_corte", "dp_aplicavel", "data_descargas_parciais"])
 
-if not df_respostas.empty:
-    df_respostas["campo_id"] = df_respostas["campo_id"].astype(str)
+    try:
+        df_r = conn.read(worksheet="Respostas", ttl=0)
+    except Exception:
+        df_r = pd.DataFrame(columns=["nome_ptd", "campo_id", "valor", "observacoes"])
+
+    if not df_r.empty and "campo_id" in df_r.columns:
+        df_r["campo_id"] = df_r["campo_id"].astype(str)
+
+    return df_o, df_r
+
+df_obras, df_respostas = carregar_dados()
 
 # Estado de Navegação
 if "ptd_selecionado" not in st.session_state:
@@ -67,10 +75,10 @@ if st.session_state.ptd_selecionado is None:
             nome_clean = nome_ptd.strip()
             if not nome_clean:
                 st.error("Escreva o Nome da Obra e/ou PTD/PS.")
-            elif not df_obras.empty and nome_clean in df_obras["nome_ptd"].values:
+            elif not df_obras.empty and "nome_ptd" in df_obras.columns and nome_clean in df_obras["nome_ptd"].values:
                 st.error("Já existe um registo com esta Obra!")
             else:
-                # 1. Adicionar às Obras
+                # Criar novos dataframes
                 nova_obra = pd.DataFrame([{
                     "nome_ptd": nome_clean,
                     "data_corte": str(dt_corte),
@@ -79,7 +87,6 @@ if st.session_state.ptd_selecionado is None:
                 }])
                 df_obras = pd.concat([df_obras, nova_obra], ignore_index=True)
 
-                # 2. Criar respostas por omissão
                 novas_respostas = []
                 for campo in CAMPOS_CHECKLIST:
                     val_padrao = campo["opcoes"][0] if campo["tipo"] == "selecao" else ""
@@ -91,22 +98,24 @@ if st.session_state.ptd_selecionado is None:
                     })
                 df_respostas = pd.concat([df_respostas, pd.DataFrame(novas_respostas)], ignore_index=True)
 
-                # Atualizar Google Sheets
-                conn.update(worksheet="Obras", data=df_obras)
-                conn.update(worksheet="Respostas", data=df_respostas)
-                
-                st.session_state.ptd_selecionado = nome_clean
-                st.rerun()
+                # Atualização do Google Sheets
+                try:
+                    conn.update(worksheet="Obras", data=df_obras)
+                    conn.update(worksheet="Respostas", data=df_respostas)
+                    st.session_state.ptd_selecionado = nome_clean
+                    st.rerun()
+                except Exception as e:
+                    st.error("Erro de permissão ao escrever no Google Sheets. Verifique se as credenciais nos 'Secrets' incluem uma Service Account com permissão de escrita.")
 
     st.markdown("### 🏬 Histórico de Intervenções")
-    if df_obras.empty:
+    if df_obras.empty or "nome_ptd" not in df_obras.columns:
         st.info("Nenhuma Obra registada. Clique no botão acima para adicionar.")
     else:
         for idx, row in df_obras.iterrows():
             ptd_key = str(row["nome_ptd"])
-            dt_corte_val = str(row["data_corte"])
-            dp_app_val = str(row["dp_aplicavel"])
-            dp_info = str(row["data_descargas_parciais"]) if dp_app_val == "Aplicável" else "Não Aplicável"
+            dt_corte_val = str(row.get("data_corte", ""))
+            dp_app_val = str(row.get("dp_aplicavel", ""))
+            dp_info = str(row.get("data_descargas_parciais", "")) if dp_app_val == "Aplicável" else "Não Aplicável"
 
             with st.container(border=True):
                 col1, col2, col3, col4 = st.columns([3, 2, 2, 1])
@@ -138,7 +147,6 @@ else:
         st.title(f"⚡ Obra: {meta['nome_ptd']}")
         st.markdown("---")
 
-        # Cabeçalho com Datas
         with st.container(border=True):
             c_m1, c_m2, c_m3, c_m4 = st.columns([2, 2, 1.5, 2])
             c_m1.markdown(f"**Nome da Obra:** `{meta['nome_ptd']}`")
@@ -164,7 +172,6 @@ else:
                 key="dt_dp_head"
             )
 
-            # Gravar alterações de metadados na nuvem
             if (str(nova_dt_corte) != str(meta["data_corte"]) or 
                 novo_dp_app != dp_aplicavel_atual or 
                 str(nova_dt_dp) != str(meta["data_descargas_parciais"])):
@@ -184,7 +191,6 @@ else:
             i_tipo = item.get("tipo", "texto")
             i_ph = item.get("placeholder", "Notas suplementares...")
 
-            # Pesquisar resposta correspondente
             resp_idx = df_respostas[(df_respostas["nome_ptd"] == ptd_key) & (df_respostas["campo_id"] == i_id)].index
 
             if len(resp_idx) > 0:
