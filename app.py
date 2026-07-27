@@ -25,15 +25,16 @@ CAMPOS_CHECKLIST = [
 # Inicializar Ligação ao Google Sheets
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# Função para carregar dados de forma segura e garantir tipos String
+# Função com CACHE para evitar o erro de limite de requisições (429)
+@st.cache_data(ttl=300) # Mantém dados em cache durante 5 minutos
 def carregar_dados():
     try:
-        df_o = conn.read(worksheet="Obras", ttl=0)
+        df_o = conn.read(worksheet="Obras")
     except Exception:
         df_o = pd.DataFrame(columns=["nome_ptd", "data_corte", "dp_aplicavel", "data_descargas_parciais"])
 
     try:
-        df_r = conn.read(worksheet="Respostas", ttl=0)
+        df_r = conn.read(worksheet="Respostas")
     except Exception:
         df_r = pd.DataFrame(columns=["nome_ptd", "campo_id", "valor", "observacoes"])
 
@@ -104,14 +105,11 @@ if st.session_state.ptd_selecionado is None:
                     })
                 df_respostas = pd.concat([df_respostas, pd.DataFrame(novas_respostas)], ignore_index=True)
 
-                # Garantir dtypes string
-                df_obras = df_obras.astype(str)
-                df_respostas = df_respostas.astype(str)
-
                 # Atualização do Google Sheets
                 try:
-                    conn.update(worksheet="Obras", data=df_obras)
-                    conn.update(worksheet="Respostas", data=df_respostas)
+                    conn.update(worksheet="Obras", data=df_obras.astype(str))
+                    conn.update(worksheet="Respostas", data=df_respostas.astype(str))
+                    st.cache_data.clear() # Limpa a cache para ler os dados atualizados
                     st.session_state.ptd_selecionado = nome_clean
                     st.rerun()
                 except Exception as e:
@@ -142,8 +140,9 @@ if st.session_state.ptd_selecionado is None:
                         df_obras = df_obras[df_obras["nome_ptd"] != ptd_key]
                         df_respostas = df_respostas[df_respostas["nome_ptd"] != ptd_key]
                         try:
-                            conn.update(worksheet="Obras", data=df_obras)
-                            conn.update(worksheet="Respostas", data=df_respostas)
+                            conn.update(worksheet="Obras", data=df_obras.astype(str))
+                            conn.update(worksheet="Respostas", data=df_respostas.astype(str))
+                            st.cache_data.clear() # Limpa a cache para atualizar a lista
                             st.rerun()
                         except Exception as e:
                             st.error(f"Erro ao apagar no Google Sheets: {e}")
@@ -194,6 +193,7 @@ else:
                 df_obras.loc[idx_obra, "data_descargas_parciais"] = str(nova_dt_dp)
                 try:
                     conn.update(worksheet="Obras", data=df_obras.astype(str))
+                    st.cache_data.clear()
                     st.rerun()
                 except Exception as e:
                     st.error(f"Erro ao atualizar no Google Sheets: {e}")
@@ -228,7 +228,6 @@ else:
                         nova_obs = col_obs.text_input(f"Obs_{i_id}", value=obs_atual, placeholder="Notas suplementares...", label_visibility="collapsed")
 
                     if str(novo_val) != str(val_atual) or str(nova_obs) != str(obs_atual):
-                        # Assegurar conversão explícita da coluna inteira para texto antes de atribuir
                         df_respostas["observacoes"] = df_respostas["observacoes"].astype(str)
                         df_respostas["valor"] = df_respostas["valor"].astype(str)
 
@@ -239,6 +238,7 @@ else:
         if modificado:
             try:
                 conn.update(worksheet="Respostas", data=df_respostas.astype(str))
+                st.cache_data.clear()
                 st.rerun()
             except Exception as e:
                 st.error(f"Erro ao guardar respostas no Google Sheets: {e}")
