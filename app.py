@@ -25,7 +25,7 @@ CAMPOS_CHECKLIST = [
 # Inicializar Ligação ao Google Sheets
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# Função para carregar dados de forma segura
+# Função para carregar dados de forma segura e garantir tipos String
 def carregar_dados():
     try:
         df_o = conn.read(worksheet="Obras", ttl=0)
@@ -37,8 +37,14 @@ def carregar_dados():
     except Exception:
         df_r = pd.DataFrame(columns=["nome_ptd", "campo_id", "valor", "observacoes"])
 
-    if not df_r.empty and "campo_id" in df_r.columns:
-        df_r["campo_id"] = df_r["campo_id"].astype(str)
+    # Conversão de segurança para evitar o erro de 'float64'
+    if not df_o.empty:
+        for col in df_o.columns:
+            df_o[col] = df_o[col].fillna("").astype(str)
+
+    if not df_r.empty:
+        for col in df_r.columns:
+            df_r[col] = df_r[col].fillna("").astype(str)
 
     return df_o, df_r
 
@@ -80,9 +86,9 @@ if st.session_state.ptd_selecionado is None:
             else:
                 # Criar novos dataframes
                 nova_obra = pd.DataFrame([{
-                    "nome_ptd": nome_clean,
+                    "nome_ptd": str(nome_clean),
                     "data_corte": str(dt_corte),
-                    "dp_aplicavel": dp_app,
+                    "dp_aplicavel": str(dp_app),
                     "data_descargas_parciais": str(dt_dp)
                 }])
                 df_obras = pd.concat([df_obras, nova_obra], ignore_index=True)
@@ -91,12 +97,16 @@ if st.session_state.ptd_selecionado is None:
                 for campo in CAMPOS_CHECKLIST:
                     val_padrao = campo["opcoes"][0] if campo["tipo"] == "selecao" else ""
                     novas_respostas.append({
-                        "nome_ptd": nome_clean,
-                        "campo_id": campo["id"],
-                        "valor": val_padrao,
+                        "nome_ptd": str(nome_clean),
+                        "campo_id": str(campo["id"]),
+                        "valor": str(val_padrao),
                         "observacoes": ""
                     })
                 df_respostas = pd.concat([df_respostas, pd.DataFrame(novas_respostas)], ignore_index=True)
+
+                # Garantir dtypes string
+                df_obras = df_obras.astype(str)
+                df_respostas = df_respostas.astype(str)
 
                 # Atualização do Google Sheets
                 try:
@@ -105,7 +115,6 @@ if st.session_state.ptd_selecionado is None:
                     st.session_state.ptd_selecionado = nome_clean
                     st.rerun()
                 except Exception as e:
-                    # Mostra o erro exato para diagnóstico
                     st.error(f"Erro ao gravar no Google Sheets: {e}")
 
     st.markdown("### 🏬 Histórico de Intervenções")
@@ -184,7 +193,7 @@ else:
                 df_obras.loc[idx_obra, "dp_aplicavel"] = novo_dp_app
                 df_obras.loc[idx_obra, "data_descargas_parciais"] = str(nova_dt_dp)
                 try:
-                    conn.update(worksheet="Obras", data=df_obras)
+                    conn.update(worksheet="Obras", data=df_obras.astype(str))
                     st.rerun()
                 except Exception as e:
                     st.error(f"Erro ao atualizar no Google Sheets: {e}")
@@ -218,14 +227,18 @@ else:
                         novo_val = col_val.text_input(f"Val_{i_id}", value=val_atual, placeholder=i_ph, label_visibility="collapsed")
                         nova_obs = col_obs.text_input(f"Obs_{i_id}", value=obs_atual, placeholder="Notas suplementares...", label_visibility="collapsed")
 
-                    if novo_val != val_atual or nova_obs != obs_atual:
-                        df_respostas.loc[r_idx, "valor"] = novo_val
-                        df_respostas.loc[r_idx, "observacoes"] = nova_obs
+                    if str(novo_val) != str(val_atual) or str(nova_obs) != str(obs_atual):
+                        # Assegurar conversão explícita da coluna inteira para texto antes de atribuir
+                        df_respostas["observacoes"] = df_respostas["observacoes"].astype(str)
+                        df_respostas["valor"] = df_respostas["valor"].astype(str)
+
+                        df_respostas.loc[r_idx, "valor"] = str(novo_val)
+                        df_respostas.loc[r_idx, "observacoes"] = str(nova_obs)
                         modificado = True
 
         if modificado:
             try:
-                conn.update(worksheet="Respostas", data=df_respostas)
+                conn.update(worksheet="Respostas", data=df_respostas.astype(str))
                 st.rerun()
             except Exception as e:
                 st.error(f"Erro ao guardar respostas no Google Sheets: {e}")
