@@ -105,7 +105,8 @@ if st.session_state.ptd_selecionado is None:
                     st.session_state.ptd_selecionado = nome_clean
                     st.rerun()
                 except Exception as e:
-                    st.error("Erro de permissão ao escrever no Google Sheets. Verifique se as credenciais nos 'Secrets' incluem uma Service Account com permissão de escrita.")
+                    # Mostra o erro exato para diagnóstico
+                    st.error(f"Erro ao gravar no Google Sheets: {e}")
 
     st.markdown("### 🏬 Histórico de Intervenções")
     if df_obras.empty or "nome_ptd" not in df_obras.columns:
@@ -131,9 +132,12 @@ if st.session_state.ptd_selecionado is None:
                     if st.sidebar.button(f"🗑️ Confirmar apagar {ptd_key}", key=f"del_btn_{ptd_key}"):
                         df_obras = df_obras[df_obras["nome_ptd"] != ptd_key]
                         df_respostas = df_respostas[df_respostas["nome_ptd"] != ptd_key]
-                        conn.update(worksheet="Obras", data=df_obras)
-                        conn.update(worksheet="Respostas", data=df_respostas)
-                        st.rerun()
+                        try:
+                            conn.update(worksheet="Obras", data=df_obras)
+                            conn.update(worksheet="Respostas", data=df_respostas)
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Erro ao apagar no Google Sheets: {e}")
 
 # --- ECRÃ 2: FICHA DA OBRA ---
 else:
@@ -179,8 +183,11 @@ else:
                 df_obras.loc[idx_obra, "data_corte"] = str(nova_dt_corte)
                 df_obras.loc[idx_obra, "dp_aplicavel"] = novo_dp_app
                 df_obras.loc[idx_obra, "data_descargas_parciais"] = str(nova_dt_dp)
-                conn.update(worksheet="Obras", data=df_obras)
-                st.rerun()
+                try:
+                    conn.update(worksheet="Obras", data=df_obras)
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Erro ao atualizar no Google Sheets: {e}")
 
         st.markdown("### 📋 Checklist e Elementos de Processo")
         modificado = False
@@ -217,5 +224,8 @@ else:
                         modificado = True
 
         if modificado:
-            conn.update(worksheet="Respostas", data=df_respostas)
-            st.rerun()
+            try:
+                conn.update(worksheet="Respostas", data=df_respostas)
+                st.rerun()
+            except Exception as e:
+                st.error(f"Erro ao guardar respostas no Google Sheets: {e}")
