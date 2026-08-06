@@ -10,13 +10,13 @@ st.set_page_config(
     layout="wide"
 )
 
-# Estrutura da Checklist
+# PONTO 1: Adicionada opção "Não Aplicável" ao PI e PIT
 CAMPOS_CHECKLIST = [
     {"id": "croqui", "label": "Croqui", "tipo": "selecao", "opcoes": ["Não Feito", "Feito"]},
     {"id": "rc", "label": "RC (Responsável de Trabalhos)", "tipo": "texto", "placeholder": "Nome da pessoa..."},
     {"id": "obra_dm", "label": "Obra DM", "tipo": "texto", "placeholder": "Número da Obra DM"},
-    {"id": "pi", "label": "PI -Pedido de Indisponibilidade", "tipo": "selecao", "opcoes": ["Não Feito", "Feito e Guardado", "Feito e Submetido", "Feito e Aprovado"]},
-    {"id": "pit", "label": "PIT -Pedido de Intervenção em Tensão", "tipo": "selecao", "opcoes": ["Não Feito", "Feito e Guardado", "Feito e Submetido", "Feito e Aprovado"]},
+    {"id": "pi", "label": "PI -Pedido de Indisponibilidade", "tipo": "selecao", "opcoes": ["Não Feito", "Feito e Guardado", "Feito e Submetido", "Feito e Aprovado", "Não Aplicável"]},
+    {"id": "pit", "label": "PIT -Pedido de Intervenção em Tensão", "tipo": "selecao", "opcoes": ["Não Feito", "Feito e Guardado", "Feito e Submetido", "Feito e Aprovado", "Não Aplicável"]},
     {"id": "clientes", "label": "PTC Afetados?", "tipo": "selecao", "opcoes": ["Não", "Sim, Não foram contactados", "Sim, Já foram contactados"]},
     {"id": "geradores", "label": "Tem Geradores?", "tipo": "selecao", "opcoes": ["Não", "Sim"]},
     {"id": "croqui_celas", "label": "Croqui para Identificação das Celas", "tipo": "selecao", "opcoes": ["Não Feito", "Feito", "Feito e Enviado"]}
@@ -25,7 +25,7 @@ CAMPOS_CHECKLIST = [
 # Inicializar Ligação ao Google Sheets
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# Função com CACHE para evitar erro de limites (429)
+# Função com CACHE para evitar limite 429
 @st.cache_data(ttl=300)
 def carregar_dados():
     try:
@@ -38,7 +38,6 @@ def carregar_dados():
     except Exception:
         df_r = pd.DataFrame(columns=["nome_ptd", "campo_id", "valor", "observacoes"])
 
-    # Garantir colunas necessárias e conversão para string
     if not df_o.empty:
         if "arquivado" not in df_o.columns:
             df_o["arquivado"] = "Não"
@@ -61,7 +60,6 @@ df_obras, df_respostas = carregar_dados()
 if "ptd_selecionado" not in st.session_state:
     st.session_state.ptd_selecionado = None
 
-# Função para extrair a primeira data (usada para ordenação)
 def extrair_primeira_data(data_str):
     try:
         primeira = str(data_str).split(",")[0].split(" à ")[0].strip()
@@ -69,7 +67,6 @@ def extrair_primeira_data(data_str):
     except Exception:
         return date.max
 
-# Função para extrair a última data (usada para verificação de arquivo automático)
 def extrair_ultima_data(data_str):
     try:
         partes = str(data_str).replace(" à ", ",").split(",")
@@ -78,13 +75,17 @@ def extrair_ultima_data(data_str):
     except Exception:
         return date.min
 
-# Verificar se a obra tem PI e PIT Aprovados
+# PONTO 1: Validação do Status ignorando campos com "Não Aplicável"
 def verificar_status_aprovado(ptd_nome, df_resp):
     pi_status = df_resp[(df_resp["nome_ptd"] == ptd_nome) & (df_resp["campo_id"] == "pi")]
     pit_status = df_resp[(df_resp["nome_ptd"] == ptd_nome) & (df_resp["campo_id"] == "pit")]
     
-    pi_ok = not pi_status.empty and pi_status.iloc[0]["valor"] == "Feito e Aprovado"
-    pit_ok = not pit_status.empty and pit_status.iloc[0]["valor"] == "Feito e Aprovado"
+    val_pi = pi_status.iloc[0]["valor"] if not pi_status.empty else "Não Feito"
+    val_pit = pit_status.iloc[0]["valor"] if not pit_status.empty else "Não Feito"
+    
+    # Se um for "Não Aplicável", ignoramos essa verificação
+    pi_ok = (val_pi == "Feito e Aprovado") or (val_pi == "Não Aplicável")
+    pit_ok = (val_pit == "Feito e Aprovado") or (val_pit == "Não Aplicável")
     
     return pi_ok and pit_ok
 
@@ -152,10 +153,7 @@ if st.session_state.ptd_selecionado is None:
     with st.expander("➕ REGISTAR NOVA OBRA", expanded=False):
         c1, c2, c3, c4 = st.columns([2, 1.5, 1, 1])
         nome_ptd = c1.text_input("Nome da Obra", placeholder="Ex: PTD FLG 0266")
-        
-        # CORREÇÃO AQUI: date_input configurado para aceitar 1 dia ou intervalo de datas
         dt_corte_input = c2.date_input("Data(s) do Corte", value=[datetime.now().date()])
-        
         dp_app = c3.selectbox("Descargas Parciais?", ["Aplicável", "Não Aplicável"])
         dt_dp = c4.date_input("Data Descargas Parciais", value=datetime.now().date(), disabled=(dp_app == "Não Aplicável"))
 
@@ -166,7 +164,6 @@ if st.session_state.ptd_selecionado is None:
             elif not df_obras.empty and "nome_ptd" in df_obras.columns and nome_clean in df_obras["nome_ptd"].values:
                 st.error("Já existe um registo com esta Obra!")
             else:
-                # Tratar se o utilizador selecionou 1 dia ou um intervalo
                 if isinstance(dt_corte_input, (list, tuple)):
                     dt_corte_str = " à ".join([str(d) for d in dt_corte_input])
                 else:
@@ -179,7 +176,6 @@ if st.session_state.ptd_selecionado is None:
                     "data_descargas_parciais": str(dt_dp),
                     "arquivado": "Não"
                 }])
-                df_obras = pd.concat([df_obras, nova_obra], ignore_ignore_index=True) if hasattr(pd, "concat") else df_obras.append(nova_obra)
                 df_obras = pd.concat([df_obras, nova_obra], ignore_index=True)
 
                 novas_respostas = []
@@ -230,7 +226,7 @@ if st.session_state.ptd_selecionado is None:
 
             aprovado = verificar_status_aprovado(ptd_key, df_respostas)
             cor_destaque = "#28a745" if aprovado else "#dc3545"
-            icone_status = "🟢 APROVADO (PI + PIT)" if aprovado else "🔴 PENDENTE / EM CURSO"
+            icone_status = "🟢 APROVADO / CONCLUÍDO" if aprovado else "🔴 PENDENTE / EM CURSO"
 
             with st.container(border=True):
                 col_status, col1, col2, col3, col4, col5 = st.columns([0.3, 3, 2, 2, 1, 1])
@@ -272,11 +268,21 @@ else:
         st.markdown("---")
 
         with st.container(border=True):
-            c_m1, c_m2, c_m3, c_m4 = st.columns([2, 2, 1.5, 2])
-            c_m1.markdown(f"**Nome da Obra:** `{meta['nome_ptd']}`")
+            # PONTO 2: Permite editar o Nome da Obra e Data do Corte
+            c_m1, c_m2, c_m3, c_m4 = st.columns([2.5, 2, 1.5, 2])
+            
+            novo_nome_obra = c_m1.text_input("Nome da Obra", value=str(meta['nome_ptd']), key="edit_nome_obra")
+            
+            # Converter datas guardadas para o componente date_input
+            dt_corte_str = str(meta["data_corte"])
+            datas_default = []
+            try:
+                for d in dt_corte_str.replace(" à ", ",").split(","):
+                    datas_default.append(datetime.strptime(d.strip(), "%Y-%m-%d").date())
+            except Exception:
+                datas_default = [datetime.now().date()]
 
-            dt_corte_val_str = str(meta["data_corte"])
-            c_m2.markdown(f"**Data(s) do Corte:** `{dt_corte_val_str}`")
+            novas_datas_corte = c_m2.date_input("Data(s) do Corte", value=datas_default, key="edit_dt_corte")
 
             dp_aplicavel_atual = str(meta["dp_aplicavel"])
             novo_dp_app = c_m3.selectbox("Descargas Parciais", ["Aplicável", "Não Aplicável"], index=0 if dp_aplicavel_atual == "Aplicável" else 1, key="dp_app_head")
@@ -293,17 +299,44 @@ else:
                 key="dt_dp_head"
             )
 
-            if (novo_dp_app != dp_aplicavel_atual or str(nova_dt_dp) != str(meta["data_descargas_parciais"])):
-                df_obras.loc[idx_obra, "dp_aplicavel"] = novo_dp_app
-                df_obras.loc[idx_obra, "data_descargas_parciais"] = str(nova_dt_dp)
-                if "temp_sort_date" in df_obras.columns:
-                    df_obras = df_obras.drop(columns=["temp_sort_date"])
-                try:
-                    conn.update(worksheet="Obras", data=df_obras.astype(str))
-                    st.cache_data.clear()
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Erro ao atualizar no Google Sheets: {e}")
+            # Processar string da nova data de corte
+            if isinstance(novas_datas_corte, (list, tuple)):
+                novas_datas_str = " à ".join([str(d) for d in novas_datas_corte])
+            else:
+                novas_datas_str = str(novas_datas_corte)
+
+            # Verificar se houve alterações nos metadados
+            nome_alterado = (novo_nome_obra.strip() != str(meta["nome_ptd"]))
+            corte_alterado = (novas_datas_str != dt_corte_str)
+            dp_alterado = (novo_dp_app != dp_aplicavel_atual)
+            dp_dt_alterada = (str(nova_dt_dp) != str(meta["data_descargas_parciais"]))
+
+            if nome_alterado or corte_alterado or dp_alterado or dp_dt_alterada:
+                if st.button("💾 Guardar Alterações do Cabeçalho", type="primary"):
+                    novo_nome_clean = novo_nome_obra.strip()
+                    if not novo_nome_clean:
+                        st.error("O nome da obra não pode ser vazio.")
+                    else:
+                        # Se mudou de nome, atualiza a chave nas respostas também
+                        if nome_alterado:
+                            df_respostas.loc[df_respostas["nome_ptd"] == ptd_key, "nome_ptd"] = novo_nome_clean
+                            st.session_state.ptd_selecionado = novo_nome_clean
+
+                        df_obras.loc[idx_obra, "nome_ptd"] = novo_nome_clean
+                        df_obras.loc[idx_obra, "data_corte"] = novas_datas_str
+                        df_obras.loc[idx_obra, "dp_aplicavel"] = novo_dp_app
+                        df_obras.loc[idx_obra, "data_descargas_parciais"] = str(nova_dt_dp)
+
+                        if "temp_sort_date" in df_obras.columns:
+                            df_obras = df_obras.drop(columns=["temp_sort_date"])
+
+                        try:
+                            conn.update(worksheet="Obras", data=df_obras.astype(str))
+                            conn.update(worksheet="Respostas", data=df_respostas.astype(str))
+                            st.cache_data.clear()
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Erro ao atualizar metadados: {e}")
 
         st.markdown("### 📋 Checklist e Elementos de Processo")
         modificado = False
@@ -314,7 +347,7 @@ else:
             i_tipo = item.get("tipo", "texto")
             i_ph = item.get("placeholder", "Notas suplementares...")
 
-            resp_idx = df_respostas[(df_respostas["nome_ptd"] == ptd_key) & (df_respostas["campo_id"] == i_id)].index
+            resp_idx = df_respostas[(df_respostas["nome_ptd"] == st.session_state.ptd_selecionado) & (df_respostas["campo_id"] == i_id)].index
 
             if len(resp_idx) > 0:
                 r_idx = resp_idx[0]
