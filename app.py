@@ -64,7 +64,6 @@ if "ptd_selecionado" not in st.session_state:
 # Função para extrair a primeira data (usada para ordenação)
 def extrair_primeira_data(data_str):
     try:
-        # Se for um intervalo/lista separado por vírgula ou ' à '
         primeira = str(data_str).split(",")[0].split(" à ")[0].strip()
         return datetime.strptime(primeira, "%Y-%m-%d").date()
     except Exception:
@@ -154,8 +153,8 @@ if st.session_state.ptd_selecionado is None:
         c1, c2, c3, c4 = st.columns([2, 1.5, 1, 1])
         nome_ptd = c1.text_input("Nome da Obra", placeholder="Ex: PTD FLG 0266")
         
-        # PONTO 2: Seleção de múltipla data / intervalo de corte
-        dt_corte_input = c2.date_input("Data(s) do Corte", value=(datetime.now().date(),), is_value_set=True)
+        # CORREÇÃO AQUI: date_input configurado para aceitar 1 dia ou intervalo de datas
+        dt_corte_input = c2.date_input("Data(s) do Corte", value=[datetime.now().date()])
         
         dp_app = c3.selectbox("Descargas Parciais?", ["Aplicável", "Não Aplicável"])
         dt_dp = c4.date_input("Data Descargas Parciais", value=datetime.now().date(), disabled=(dp_app == "Não Aplicável"))
@@ -167,8 +166,8 @@ if st.session_state.ptd_selecionado is None:
             elif not df_obras.empty and "nome_ptd" in df_obras.columns and nome_clean in df_obras["nome_ptd"].values:
                 st.error("Já existe um registo com esta Obra!")
             else:
-                # Formatar as datas de corte (seja 1 dia ou um intervalo)
-                if isinstance(dt_corte_input, (tuple, list)):
+                # Tratar se o utilizador selecionou 1 dia ou um intervalo
+                if isinstance(dt_corte_input, (list, tuple)):
                     dt_corte_str = " à ".join([str(d) for d in dt_corte_input])
                 else:
                     dt_corte_str = str(dt_corte_input)
@@ -180,6 +179,7 @@ if st.session_state.ptd_selecionado is None:
                     "data_descargas_parciais": str(dt_dp),
                     "arquivado": "Não"
                 }])
+                df_obras = pd.concat([df_obras, nova_obra], ignore_ignore_index=True) if hasattr(pd, "concat") else df_obras.append(nova_obra)
                 df_obras = pd.concat([df_obras, nova_obra], ignore_index=True)
 
                 novas_respostas = []
@@ -207,7 +207,6 @@ if st.session_state.ptd_selecionado is None:
     if df_obras.empty or "nome_ptd" not in df_obras.columns:
         st.info("Nenhuma Obra registada. Clique no botão acima para adicionar.")
     else:
-        # PONTO 1: Ordenar da data mais antiga para a mais recente
         df_obras["temp_sort_date"] = df_obras["data_corte"].apply(extrair_primeira_data)
         df_obras_ordenadas = df_obras.sort_values(by="temp_sort_date", ascending=True)
 
@@ -221,25 +220,21 @@ if st.session_state.ptd_selecionado is None:
             dp_info = str(row.get("data_descargas_parciais", "")) if dp_app_val == "Aplicável" else "Não Aplicável"
             is_arquivado = str(row.get("arquivado", "Não")) == "Sim"
 
-            # PONTO 3: Arquivamento automático se a data já tiver passado
             dt_fim = extrair_ultima_data(dt_corte_val)
             passou_data = (dt_fim != date.min and dt_fim < hoje)
 
-            # Se estiver arquivada (manualmente ou por data), não mostra no histórico ativo
             if is_arquivado or passou_data:
                 continue
 
             obras_visiveis += 1
 
-            # PONTO 5: Validação Visual (Verde se PI e PIT "Feito e Aprovado", Vermelho caso contrário)
             aprovado = verificar_status_aprovado(ptd_key, df_respostas)
-            cor_destaque = "#28a745" if aprovado else "#dc3545" # Verde / Vermelho
+            cor_destaque = "#28a745" if aprovado else "#dc3545"
             icone_status = "🟢 APROVADO (PI + PIT)" if aprovado else "🔴 PENDENTE / EM CURSO"
 
             with st.container(border=True):
                 col_status, col1, col2, col3, col4, col5 = st.columns([0.3, 3, 2, 2, 1, 1])
                 
-                # Barra vertical colorida
                 col_status.markdown(f"<div style='background-color: {cor_destaque}; height: 45px; width: 8px; border-radius: 4px;'></div>", unsafe_allow_html=True)
                 
                 col1.markdown(f"#### ⚡ {ptd_key}\n<small>{icone_status}</small>", unsafe_allow_html=True)
@@ -250,7 +245,6 @@ if st.session_state.ptd_selecionado is None:
                     st.session_state.ptd_selecionado = ptd_key
                     st.rerun()
 
-                # PONTO 3: Botão para arquivar manualmente
                 if col5.button("📦 Arquivar", key=f"arch_btn_{ptd_key}", use_container_width=True):
                     df_obras.loc[idx, "arquivado"] = "Sim"
                     if "temp_sort_date" in df_obras.columns:
