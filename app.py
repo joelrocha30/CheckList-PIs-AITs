@@ -10,13 +10,13 @@ st.set_page_config(
     layout="wide"
 )
 
-# PONTO 1: Adicionada opção "Não Aplicável" ao PI e PIT
+# PONTO 1: Adicionada opção "Cancelado" ao PI e PIT
 CAMPOS_CHECKLIST = [
     {"id": "croqui", "label": "Croqui", "tipo": "selecao", "opcoes": ["Não Feito", "Feito"]},
     {"id": "rc", "label": "RC (Responsável de Trabalhos)", "tipo": "texto", "placeholder": "Nome da pessoa..."},
     {"id": "obra_dm", "label": "Obra DM", "tipo": "texto", "placeholder": "Número da Obra DM"},
-    {"id": "pi", "label": "PI -Pedido de Indisponibilidade", "tipo": "selecao", "opcoes": ["Não Feito", "Feito e Guardado", "Feito e Submetido", "Feito e Aprovado", "Não Aplicável"]},
-    {"id": "pit", "label": "PIT -Pedido de Intervenção em Tensão", "tipo": "selecao", "opcoes": ["Não Feito", "Feito e Guardado", "Feito e Submetido", "Feito e Aprovado", "Não Aplicável"]},
+    {"id": "pi", "label": "PI -Pedido de Indisponibilidade", "tipo": "selecao", "opcoes": ["Não Feito", "Feito e Guardado", "Feito e Submetido", "Feito e Aprovado", "Não Aplicável", "Cancelado"]},
+    {"id": "pit", "label": "PIT -Pedido de Intervenção em Tensão", "tipo": "selecao", "opcoes": ["Não Feito", "Feito e Guardado", "Feito e Submetido", "Feito e Aprovado", "Não Aplicável", "Cancelado"]},
     {"id": "clientes", "label": "PTC Afetados?", "tipo": "selecao", "opcoes": ["Não", "Sim, Não foram contactados", "Sim, Já foram contactados"]},
     {"id": "geradores", "label": "Tem Geradores?", "tipo": "selecao", "opcoes": ["Não", "Sim"]},
     {"id": "croqui_celas", "label": "Croqui para Identificação das Celas", "tipo": "selecao", "opcoes": ["Não Feito", "Feito", "Feito e Enviado"]}
@@ -75,7 +75,7 @@ def extrair_ultima_data(data_str):
     except Exception:
         return date.min
 
-# PONTO 1: Validação do Status ignorando campos com "Não Aplicável"
+# Validação do Status ignorando campos com "Não Aplicável"
 def verificar_status_aprovado(ptd_nome, df_resp):
     pi_status = df_resp[(df_resp["nome_ptd"] == ptd_nome) & (df_resp["campo_id"] == "pi")]
     pit_status = df_resp[(df_resp["nome_ptd"] == ptd_nome) & (df_resp["campo_id"] == "pit")]
@@ -83,7 +83,6 @@ def verificar_status_aprovado(ptd_nome, df_resp):
     val_pi = pi_status.iloc[0]["valor"] if not pi_status.empty else "Não Feito"
     val_pit = pit_status.iloc[0]["valor"] if not pit_status.empty else "Não Feito"
     
-    # Se um for "Não Aplicável", ignoramos essa verificação
     pi_ok = (val_pi == "Feito e Aprovado") or (val_pi == "Não Aplicável")
     pit_ok = (val_pit == "Feito e Aprovado") or (val_pit == "Não Aplicável")
     
@@ -268,12 +267,10 @@ else:
         st.markdown("---")
 
         with st.container(border=True):
-            # PONTO 2: Permite editar o Nome da Obra e Data do Corte
             c_m1, c_m2, c_m3, c_m4 = st.columns([2.5, 2, 1.5, 2])
             
             novo_nome_obra = c_m1.text_input("Nome da Obra", value=str(meta['nome_ptd']), key="edit_nome_obra")
             
-            # Converter datas guardadas para o componente date_input
             dt_corte_str = str(meta["data_corte"])
             datas_default = []
             try:
@@ -299,13 +296,11 @@ else:
                 key="dt_dp_head"
             )
 
-            # Processar string da nova data de corte
             if isinstance(novas_datas_corte, (list, tuple)):
                 novas_datas_str = " à ".join([str(d) for d in novas_datas_corte])
             else:
                 novas_datas_str = str(novas_datas_corte)
 
-            # Verificar se houve alterações nos metadados
             nome_alterado = (novo_nome_obra.strip() != str(meta["nome_ptd"]))
             corte_alterado = (novas_datas_str != dt_corte_str)
             dp_alterado = (novo_dp_app != dp_aplicavel_atual)
@@ -317,7 +312,6 @@ else:
                     if not novo_nome_clean:
                         st.error("O nome da obra não pode ser vazio.")
                     else:
-                        # Se mudou de nome, atualiza a chave nas respostas também
                         if nome_alterado:
                             df_respostas.loc[df_respostas["nome_ptd"] == ptd_key, "nome_ptd"] = novo_nome_clean
                             st.session_state.ptd_selecionado = novo_nome_clean
@@ -340,6 +334,7 @@ else:
 
         st.markdown("### 📋 Checklist e Elementos de Processo")
         modificado = False
+        deve_arquivar = False
 
         for item in CAMPOS_CHECKLIST:
             i_id = item["id"]
@@ -375,10 +370,22 @@ else:
                         df_respostas.loc[r_idx, "observacoes"] = str(nova_obs)
                         modificado = True
 
+                        # Se PI ou PIT forem alterados para "Cancelado", ativa a flag para arquivar
+                        if i_id in ["pi", "pit"] and str(novo_val) == "Cancelado":
+                            deve_arquivar = True
+
         if modificado:
+            if deve_arquivar:
+                df_obras.loc[idx_obra, "arquivado"] = "Sim"
+                if "temp_sort_date" in df_obras.columns:
+                    df_obras = df_obras.drop(columns=["temp_sort_date"])
+
             try:
+                conn.update(worksheet="Obras", data=df_obras.astype(str))
                 conn.update(worksheet="Respostas", data=df_respostas.astype(str))
                 st.cache_data.clear()
+                if deve_arquivar:
+                    st.session_state.ptd_selecionado = None
                 st.rerun()
             except Exception as e:
                 st.error(f"Erro ao guardar respostas no Google Sheets: {e}")
