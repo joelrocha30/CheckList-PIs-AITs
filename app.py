@@ -11,7 +11,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# Conexão segura com cache
+# Ligar ao Google Sheets com cache
 @st.cache_resource(ttl=3600)
 def conectar_gsheets():
     try:
@@ -20,7 +20,6 @@ def conectar_gsheets():
             "https://www.googleapis.com/auth/drive"
         ]
         creds_dict = dict(st.secrets["connections"]["gsheets"])
-        
         sheet_url = creds_dict.pop("spreadsheet", None)
         creds_dict.pop("type", None)
         
@@ -37,6 +36,20 @@ def conectar_gsheets():
         st.stop()
 
 doc_sheets = conectar_gsheets()
+
+# Opções predefinidas para os dropdowns de cada tipo de campo
+OPCOES_RESPOSTA = {
+    "croqui": ["Pendente", "Feito", "Não Feito", "Não Aplicável"],
+    "rc": ["Pendente", "Luis", "Outro", "Não Aplicável"],
+    "obra_dm": ["Pendente", "Inserido", "Não Aplicável"],
+    "pi": ["Pendente", "Não Feito", "Feito e Guardado", "Feito e Submetido", "Feito e Aprovado", "Não Aplicável"],
+    "pit": ["Pendente", "Não Feito", "Feito e Guardado", "Feito e Submetido", "Feito e Aprovado", "Não Aplicável"],
+    "clientes": ["Pendente", "Sim", "Não", "Não Aplicável"],
+    "geradores": ["Pendente", "Sim", "Não", "Não Aplicável"],
+    "croqui_celas": ["Pendente", "Feito", "Não Feito", "Não Aplicável"]
+}
+
+OPCOES_PADRAO_GERAL = ["Pendente", "Feito", "Não Feito", "Sim", "Não", "Feito e Aprovado", "Não Aplicável"]
 
 # Estrutura Completa da Checklist
 CHECKLIST_ESTRUTURA = {
@@ -56,8 +69,7 @@ CHECKLIST_ESTRUTURA = {
     ]
 }
 
-# --- GESTÃO DE PERSISTÊNCIA E BACKUPS ---
-
+# --- PERSISTÊNCIA E BACKUP ---
 def garantir_separador_backup(nome_backup):
     try:
         return doc_sheets.worksheet(nome_backup)
@@ -65,14 +77,12 @@ def garantir_separador_backup(nome_backup):
         return doc_sheets.add_worksheet(title=nome_backup, rows="1000", cols="20")
 
 def salvar_com_backup(nome_aba, df):
-    """Guarda na aba principal e gera cópia de segurança sem apagar dados anteriores."""
     ws = doc_sheets.worksheet(nome_aba)
     dados = [df.columns.values.tolist()] + df.astype(str).values.tolist()
     
     ws.clear()
     ws.update(dados)
     
-    # Backup Automático
     try:
         ws_bkp = garantir_separador_backup(f"{nome_aba}_Backup")
         df_bkp = df.copy()
@@ -96,7 +106,7 @@ def carregar_dados_sheets():
     hoje = date.today()
     alterado = False
     
-    # Verifica arquivamento automático (Apenas se NÃO tiver sido forçado o desarquivamento pelo utilizador)
+    # Arquivamento automático apenas se NÃO foi forçado o desarquivamento manual
     if not df_obras.empty and "data_corte" in df_obras.columns:
         for idx, row in df_obras.iterrows():
             data_str = str(row["data_corte"]).strip()
@@ -116,15 +126,13 @@ def carregar_dados_sheets():
         
     return df_obras, df_respostas
 
-# Função para Gerar Relatório Resumido para E-mail
 def gerar_relatorio_email(ref_obra, df_obras, df_respostas):
     obra_row = df_obras[df_obras["nome_ptd"] == ref_obra]
     data_corte = obra_row["data_corte"].values[0] if not obra_row.empty else datetime.now().strftime("%Y-%m-%d")
-    
     resp_obra = df_respostas[df_respostas["nome_ptd"] == ref_obra]
     
     total_itens = len(resp_obra)
-    feitos = sum(resp_obra["valor"].astype(str).str.contains("Feito|Conforme|Sim", case=False, na=False))
+    feitos = sum(resp_obra["valor"].astype(str).str.contains("Feito|Conforme|Sim|Aprovado", case=False, na=False))
     prog = int((feitos / total_itens) * 100) if total_itens > 0 else 0
 
     relatorio = f"""Assunto: [Acompanhamento PIs/PITs] Estado do PTD - {ref_obra}
@@ -153,7 +161,7 @@ E-REDES
 """
     return relatorio
 
-# Carga dos dados
+# Inicialização dos dados
 df_obras, df_respostas = carregar_dados_sheets()
 
 if "obra_selecionada" not in st.session_state:
@@ -169,7 +177,6 @@ if st.session_state.obra_selecionada:
         st.session_state.obra_selecionada = None
         st.rerun()
 
-# PAINEL DE OBRAS ARQUIVADAS NA SIDEBAR
 with st.sidebar.expander("📦 Obras Arquivadas", expanded=False):
     df_arq = df_obras[df_obras["arquivado"] == "Sim"]
     
@@ -186,7 +193,7 @@ with st.sidebar.expander("📦 Obras Arquivadas", expanded=False):
                 st.rerun()
                 
             if c_desarq.button("Desarq. 🔓", key=f"desarq_side_{ref_arq}", use_container_width=True):
-                # Marca como NÃO arquivado e define a flag de exceção manual
+                # Marca como NÃO arquivado e ativa a flag manual para não voltar a arquivar
                 df_obras.loc[df_obras["nome_ptd"] == ref_arq, "arquivado"] = "Não"
                 df_obras.loc[df_obras["nome_ptd"] == ref_arq, "forcar_desarquivado"] = "Sim"
                 salvar_com_backup("Obras", df_obras)
@@ -267,7 +274,7 @@ if st.session_state.obra_selecionada is None:
                     salvar_com_backup("Obras", df_obras)
                     st.rerun()
 
-# --- ECRÃ DE EDIÇÃO DO PTD ---
+# --- ECRÃ DE EDIÇÃO DO PTD (LAYOUT ORIGINAL RESTAURADO) ---
 else:
     ref_atual = st.session_state.obra_selecionada
     st.title(f"⚡ PTD: {ref_atual}")
@@ -278,7 +285,7 @@ else:
 
     st.markdown("---")
 
-    with st.expander("✉️ GERAR RESUMO PARA E-MAIL", expanded=False):
+    with st.expander("> ✉️ GERAR RESUMO PARA E-MAIL", expanded=False):
         txt_email = gerar_relatorio_email(ref_atual, df_obras, df_respostas)
         st.code(txt_email, language="text")
 
@@ -286,22 +293,42 @@ else:
     modificado = False
 
     for categoria, itens in CHECKLIST_ESTRUTURA.items():
-        with st.expander(f"📂 {categoria.upper()}", expanded=True):
+        with st.expander(f"📁 {categoria.upper()}", expanded=True):
             for item in itens:
                 i_id = item["id"]
                 match_idx = df_respostas[(df_respostas["nome_ptd"] == ref_atual) & (df_respostas["campo_id"] == i_id)].index
                 
                 if not match_idx.empty:
                     idx = match_idx[0]
-                    c_txt, c_est, c_obs = st.columns([4, 3, 4])
+                    c_txt, c_est, c_obs = st.columns([4, 2.5, 3.5])
                     
                     c_txt.markdown(f"**{i_id}** - {item['texto']}")
                     
-                    val_atual = str(df_respostas.loc[idx, "valor"])
-                    v_est = c_est.text_input(f"Valor_{i_id}", value="" if val_atual == "nan" else val_atual, label_visibility="collapsed")
+                    val_atual = str(df_respostas.loc[idx, "valor"]).strip()
+                    opcoes = OPCOES_RESPOSTA.get(i_id, OPCOES_PADRAO_GERAL)
+                    
+                    # Garante que o valor atual existe na lista de opções para evitar erros de renderização
+                    if val_atual and val_atual not in opcoes:
+                        opcoes = [val_atual] + opcoes
+                    
+                    idx_opcao = opcoes.index(val_atual) if val_atual in opcoes else 0
+                    
+                    v_est = c_est.selectbox(
+                        f"Estado_{i_id}",
+                        options=opcoes,
+                        index=idx_opcao,
+                        key=f"sb_{ref_atual}_{i_id}",
+                        label_visibility="collapsed"
+                    )
                     
                     obs_atual = str(df_respostas.loc[idx, "observacoes"])
-                    v_obs = c_obs.text_input(f"Obs_{i_id}", value="" if obs_atual == "nan" else obs_atual, placeholder="Observações...", label_visibility="collapsed")
+                    v_obs = c_obs.text_input(
+                        f"Obs_{i_id}",
+                        value="" if obs_atual == "nan" else obs_atual,
+                        placeholder="Observações...",
+                        key=f"ti_{ref_atual}_{i_id}",
+                        label_visibility="collapsed"
+                    )
                     
                     if v_est != val_atual or v_obs != obs_atual:
                         df_respostas.loc[idx, "valor"] = v_est
