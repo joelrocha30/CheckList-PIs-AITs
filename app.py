@@ -11,7 +11,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# Conexão segura com cache e tratamento de exceção para não bloquear
+# Conexão segura com cache
 @st.cache_resource(ttl=3600)
 def conectar_gsheets():
     try:
@@ -21,7 +21,6 @@ def conectar_gsheets():
         ]
         creds_dict = dict(st.secrets["connections"]["gsheets"])
         
-        # Limpeza de chaves extra que não pertencem ao JSON da Service Account
         sheet_url = creds_dict.pop("spreadsheet", None)
         creds_dict.pop("type", None)
         
@@ -29,7 +28,7 @@ def conectar_gsheets():
         client = gspread.authorize(credentials)
         
         if not sheet_url:
-            st.error("URL da folha de cálculo não encontrado em secrets.")
+            st.error("URL da folha de cálculo não encontrado nos secrets.")
             st.stop()
             
         return client.open_by_url(sheet_url)
@@ -37,48 +36,43 @@ def conectar_gsheets():
         st.error(f"Erro ao ligar ao Google Sheets: {e}")
         st.stop()
 
-# Carrega o ficheiro Google Sheets
 doc_sheets = conectar_gsheets()
 
-# Configuração da Checklist Estrutura
+# Estrutura Completa da Checklist
 CHECKLIST_ESTRUTURA = {
-    "1. Construção Civil e Infraestrutura": [
+    "1. CONSTRUÇÃO CIVIL E INFRAESTRUTURA": [
         {"id": "croqui", "texto": "Acesso direto e desimpedido a partir da via pública (Croqui)."},
         {"id": "rc", "texto": "Responsável de Cobrança / Contacto em Obra."},
         {"id": "obra_dm", "texto": "Número / Registo Obra DM."}
     ],
-    "2. Processos e Licenciamento": [
+    "2. PROCESSOS E LICENCIAMENTO": [
         {"id": "pi", "texto": "Processo de Instalação (PI) Feito e Aprovado."},
         {"id": "pit", "texto": "Processo de Infraestruturas de Telecomunicações (PIT) Feito e Aprovado."}
     ],
-    "3. Clientes e Equipamentos Auxiliares": [
+    "3. CLIENTES E EQUIPAMENTOS AUXILIARES": [
         {"id": "clientes", "texto": "Clientes já foram contactados / Notificados."},
         {"id": "geradores", "texto": "Necessidade / Utilização de Geradores."},
         {"id": "croqui_celas", "texto": "Croqui de Celas Feito e Enviado."}
     ]
 }
 
-# --- FUNÇÕES DE PERSISTÊNCIA E BACKUP ---
+# --- GESTÃO DE PERSISTÊNCIA E BACKUPS ---
 
 def garantir_separador_backup(nome_backup):
-    """Garante que os separadores de backup existem na Google Sheet."""
     try:
         return doc_sheets.worksheet(nome_backup)
     except gspread.exceptions.WorksheetNotFound:
         return doc_sheets.add_worksheet(title=nome_backup, rows="1000", cols="20")
 
 def salvar_com_backup(nome_aba, df):
-    """Atualiza a aba principal e faz um backup automático de segurança."""
+    """Guarda na aba principal e gera cópia de segurança sem apagar dados anteriores."""
     ws = doc_sheets.worksheet(nome_aba)
-    
-    # Prepara os dados limpos
     dados = [df.columns.values.tolist()] + df.astype(str).values.tolist()
     
-    # Atualiza a aba principal sem apagar a estrutura prévia desnecessariamente
     ws.clear()
     ws.update(dados)
     
-    # Atualiza a aba de backup com carimbo de data/hora
+    # Backup Automático
     try:
         ws_bkp = garantir_separador_backup(f"{nome_aba}_Backup")
         df_bkp = df.copy()
@@ -87,7 +81,7 @@ def salvar_com_backup(nome_aba, df):
         ws_bkp.clear()
         ws_bkp.update(dados_bkp)
     except Exception as e:
-        st.warning(f"Aviso: Não foi possível atualizar o backup de {nome_aba}: {e}")
+        st.warning(f"Aviso de backup ({nome_aba}): {e}")
 
 def carregar_dados_sheets():
     ws_obras = doc_sheets.worksheet("Obras")
@@ -96,24 +90,27 @@ def carregar_dados_sheets():
     df_obras = pd.DataFrame(ws_obras.get_all_records()).fillna("")
     df_respostas = pd.DataFrame(ws_respostas.get_all_records()).fillna("")
     
-    # --- ARQUIVAMENTO AUTOMÁTICO POR DATA DE CORTE ---
+    if "forcar_desarquivado" not in df_obras.columns:
+        df_obras["forcar_desarquivado"] = "Não"
+        
     hoje = date.today()
     alterado = False
     
+    # Verifica arquivamento automático (Apenas se NÃO tiver sido forçado o desarquivamento pelo utilizador)
     if not df_obras.empty and "data_corte" in df_obras.columns:
         for idx, row in df_obras.iterrows():
             data_str = str(row["data_corte"]).strip()
-            if data_str:
+            forcar = str(row.get("forcar_desarquivado", "Não"))
+            
+            if data_str and forcar != "Sim":
                 try:
                     dt_corte = datetime.strptime(data_str, "%Y-%m-%d").date()
-                    # Se a data de corte já passou e a obra não está marcada como arquivada
                     if dt_corte < hoje and row.get("arquivado") != "Sim":
                         df_obras.loc[idx, "arquivado"] = "Sim"
                         alterado = True
                 except ValueError:
-                    pass  # Ignora formatos inválidos de data
+                    pass
                     
-    # Guardar alterações caso tenha arquivado obras automaticamente
     if alterado:
         salvar_com_backup("Obras", df_obras)
         
@@ -127,7 +124,7 @@ def gerar_relatorio_email(ref_obra, df_obras, df_respostas):
     resp_obra = df_respostas[df_respostas["nome_ptd"] == ref_obra]
     
     total_itens = len(resp_obra)
-    feitos = sum(resp_obra["valor"].astype(str).str.startswith("Feito"))
+    feitos = sum(resp_obra["valor"].astype(str).str.contains("Feito|Conforme|Sim", case=False, na=False))
     prog = int((feitos / total_itens) * 100) if total_itens > 0 else 0
 
     relatorio = f"""Assunto: [Acompanhamento PIs/PITs] Estado do PTD - {ref_obra}
@@ -172,7 +169,7 @@ if st.session_state.obra_selecionada:
         st.session_state.obra_selecionada = None
         st.rerun()
 
-# SECÇÃO DE ARQUIVO NA SIDEBAR
+# PAINEL DE OBRAS ARQUIVADAS NA SIDEBAR
 with st.sidebar.expander("📦 Obras Arquivadas", expanded=False):
     df_arq = df_obras[df_obras["arquivado"] == "Sim"]
     
@@ -189,7 +186,9 @@ with st.sidebar.expander("📦 Obras Arquivadas", expanded=False):
                 st.rerun()
                 
             if c_desarq.button("Desarq. 🔓", key=f"desarq_side_{ref_arq}", use_container_width=True):
+                # Marca como NÃO arquivado e define a flag de exceção manual
                 df_obras.loc[df_obras["nome_ptd"] == ref_arq, "arquivado"] = "Não"
+                df_obras.loc[df_obras["nome_ptd"] == ref_arq, "forcar_desarquivado"] = "Sim"
                 salvar_com_backup("Obras", df_obras)
                 st.rerun()
             st.markdown("---")
@@ -218,7 +217,8 @@ if st.session_state.obra_selecionada is None:
                     "data_corte": str(nova_data),
                     "dp_aplicavel": "Não Aplicável",
                     "data_descargas_parciais": "",
-                    "arquivado": "Não"
+                    "arquivado": "Não",
+                    "forcar_desarquivado": "Não"
                 }])
                 
                 df_obras = pd.concat([df_obras, nova_obra_df], ignore_index=True)
@@ -237,19 +237,19 @@ if st.session_state.obra_selecionada is None:
                 df_respostas = pd.concat([df_respostas, pd.DataFrame(novas_respostas)], ignore_index=True)
                 salvar_com_backup("Respostas", df_respostas)
                 
-                st.success("PTD adicionado com sucesso e backup atualizado!")
+                st.success("PTD adicionado com sucesso!")
                 st.rerun()
 
     st.markdown("### 🏬 PTDs Ativos (Em Acompanhamento)")
     df_ativas = df_obras[df_obras["arquivado"] != "Sim"]
     
     if df_ativas.empty:
-        st.info("Nenhum PTD ativo no momento. (Os PTDs com data ultrapassada foram movidos para as 'Obras Arquivadas' no menu lateral).")
+        st.info("Nenhum PTD ativo no momento.")
     else:
         for idx, row in df_ativas.iterrows():
             ref = row["nome_ptd"]
             dt = row["data_corte"]
-            dp = row["dp_aplicavel"]
+            dp = row.get("dp_aplicavel", "N/A")
             
             with st.container(border=True):
                 c1, c2, c3, c4, c5 = st.columns([3, 2, 2.5, 1, 1])
@@ -263,6 +263,7 @@ if st.session_state.obra_selecionada is None:
                     
                 if c5.button("Arquivar 📦", key=f"btn_arq_{ref}", use_container_width=True):
                     df_obras.loc[df_obras["nome_ptd"] == ref, "arquivado"] = "Sim"
+                    df_obras.loc[df_obras["nome_ptd"] == ref, "forcar_desarquivado"] = "Não"
                     salvar_com_backup("Obras", df_obras)
                     st.rerun()
 
@@ -271,10 +272,9 @@ else:
     ref_atual = st.session_state.obra_selecionada
     st.title(f"⚡ PTD: {ref_atual}")
     
-    # Verifica estado de arquivamento
     e_arquivado = df_obras.loc[df_obras["nome_ptd"] == ref_atual, "arquivado"].values
     if len(e_arquivado) > 0 and e_arquivado[0] == "Sim":
-        st.warning("⚠️ Esta obra encontra-se no Arquivo. Pode continuar a fazer alterações ou desarquivá-la no menu lateral.")
+        st.warning("⚠️ Esta obra encontra-se no Arquivo. Pode efetuar alterações ou desarquivá-la no menu lateral.")
 
     st.markdown("---")
 
