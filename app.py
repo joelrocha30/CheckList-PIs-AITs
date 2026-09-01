@@ -1,7 +1,8 @@
 import streamlit as st
-from st_gsheets_connection import GSheetsConnection
 import pandas as pd
 from datetime import datetime
+import gspread
+from google.oauth2.service_account import Credentials
 
 # Configuração da página
 st.set_page_config(
@@ -10,8 +11,28 @@ st.set_page_config(
     layout="wide"
 )
 
-# Conexão com o Google Sheets utilizando os teus secrets
-conn = st.connection("gsheets", type=GSheetsConnection)
+# Conexão nativa ao Google Sheets usando as tuas credenciais do secrets
+@st.cache_resource
+def conectar_gsheets():
+    scope = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive"
+    ]
+    # Puxa os secrets que já tens no Streamlit Cloud
+    creds_dict = dict(st.secrets["connections"]["gsheets"])
+    # Remove chaves de configuração que não pertencem ao JSON da service account
+    creds_dict.pop("spreadsheet", None)
+    creds_dict.pop("type", None)
+    
+    credentials = Credentials.from_service_account_info(creds_dict, scopes=scope)
+    client = gspread.authorize(credentials)
+    
+    # Abre a folha pelo URL guardado no secrets
+    sheet_url = st.secrets["connections"]["gsheets"]["spreadsheet"]
+    return client.open_by_url(sheet_url)
+
+# Carrega o workbook do Google Sheets
+doc_sheets = conectar_gsheets()
 
 # Configuração da Checklist Estrutura
 CHECKLIST_ESTRUTURA = {
@@ -31,17 +52,24 @@ CHECKLIST_ESTRUTURA = {
     ]
 }
 
-# Funções de Leitura e Escrita
+# Funções de Leitura e Escrita atualizadas para gspread
 def carregar_dados_sheets():
-    df_obras = conn.read(worksheet="Obras", ttl=0)
-    df_respostas = conn.read(worksheet="Respostas", ttl=0)
-    return df_obras.fillna(""), df_respostas.fillna("")
+    ws_obras = doc_sheets.worksheet("Obras")
+    ws_respostas = doc_sheets.worksheet("Respostas")
+    
+    df_obras = pd.DataFrame(ws_obras.get_all_records()).fillna("")
+    df_respostas = pd.DataFrame(ws_respostas.get_all_records()).fillna("")
+    return df_obras, df_respostas
 
 def guardar_obras_sheets(df_obras):
-    conn.update(worksheet="Obras", data=df_obras)
+    ws_obras = doc_sheets.worksheet("Obras")
+    ws_obras.clear()
+    ws_obras.update([df_obras.columns.values.tolist()] + df_obras.astype(str).values.tolist())
 
 def guardar_respostas_sheets(df_respostas):
-    conn.update(worksheet="Respostas", data=df_respostas)
+    ws_respostas = doc_sheets.worksheet("Respostas")
+    ws_respostas.clear()
+    ws_respostas.update([df_respostas.columns.values.tolist()] + df_respostas.astype(str).values.tolist())
 
 # Função para Gerar Relatório Resumido para E-mail
 def gerar_relatorio_email(ref_obra, df_obras, df_respostas):
@@ -63,16 +91,16 @@ Segue o ponto de situação do PTD {ref_obra} (Data de Corte: {data_corte}).
 --- RESUMO DA AVALIAÇÃO ---
 • Instalação / PTD: {ref_obra}
 • Progresso Geral: {prog}%
-"""
 
-    relatorio += f"\n--- DETALHE DOS CAMPOS ---\n"
+--- DETALHE DOS CAMPOS ---
+"""
     for idx, row in resp_obra.iterrows():
         c_id = row["campo_id"]
         val = row["valor"] if row["valor"] else "Pendente"
         obs = f" ({row['observacoes']})" if row["observacoes"] and str(row["observacoes"]) != "nan" else ""
         relatorio += f"• {c_id}: {val}{obs}\n"
 
-    relatorio += f"""
+    relatorio += """
 
 Com os melhores cumprimentos,
 Joel Machado Rocha
@@ -118,7 +146,6 @@ if st.session_state.obra_selecionada is None:
     st.subheader("Base de Dados do Google Sheets")
     st.markdown("---")
     
-    # Criar Nova Obra
     with st.expander("➕ REGISTAR NOVO PTD", expanded=False):
         col_n1, col_n2 = st.columns([3, 1])
         nova_ref = col_n1.text_input("Nome do PTD", placeholder="Ex: PTD 0158 PFR - TP1")
@@ -159,7 +186,6 @@ if st.session_state.obra_selecionada is None:
                 st.success("PTD adicionado ao Google Sheets com sucesso!")
                 st.rerun()
 
-    # Lista de Obras Ativas
     st.markdown("### 🏬 PTDs em Acompanhamento")
     df_ativas = df_obras[df_obras["arquivado"] != "Sim"]
     
