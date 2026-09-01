@@ -389,3 +389,23 @@ else:
                 st.rerun()
             except Exception as e:
                 st.error(f"Erro ao guardar respostas no Google Sheets: {e}")
+
+# --- SIDEBAR: OBRAS ARQUIVADAS ---
+with st.sidebar.expander("📦 Obras em Arquivo", expanded=False):
+    obras_arquivadas = [o for o in st.session_state.base_dados["obras"] if o.get("arquivada", False)]
+    
+    if not obras_arquivadas:
+        st.caption("Nenhuma obra no arquivo.")
+    else:
+        for obra in obras_arquivadas:
+            ref_arq = obra["obra_ref"]
+            col_txt, col_btn = st.columns([1.8, 1.2])
+            
+            # Nome da obra na coluna da esquerda
+            col_txt.caption(f"📁 {ref_arq}")
+            
+            # Botão de desarquivar na coluna da direita com chave única
+            if col_btn.button("Desarquivar", key=f"desarq_side_{ref_arq}", use_container_width=True):
+                obra["arquivada"] = False
+                guardar_dados(st.session_state.base_dados)  # 1. Grava no ficheiro JSON
+                st.rerun()  # 2. Força o Streamlit a redesenhar o ecrã imediatamente
