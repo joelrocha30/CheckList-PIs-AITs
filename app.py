@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, date
 import gspread
 from google.oauth2.service_account import Credentials
 
@@ -11,27 +11,33 @@ st.set_page_config(
     layout="wide"
 )
 
-# Conexão nativa ao Google Sheets usando as tuas credenciais do secrets
-@st.cache_resource
+# Conexão segura com cache e tratamento de exceção para não bloquear
+@st.cache_resource(ttl=3600)
 def conectar_gsheets():
-    scope = [
-        "https://www.googleapis.com/auth/spreadsheets",
-        "https://www.googleapis.com/auth/drive"
-    ]
-    # Puxa os secrets que já tens no Streamlit Cloud
-    creds_dict = dict(st.secrets["connections"]["gsheets"])
-    # Remove chaves de configuração que não pertencem ao JSON da service account
-    creds_dict.pop("spreadsheet", None)
-    creds_dict.pop("type", None)
-    
-    credentials = Credentials.from_service_account_info(creds_dict, scopes=scope)
-    client = gspread.authorize(credentials)
-    
-    # Abre a folha pelo URL guardado no secrets
-    sheet_url = st.secrets["connections"]["gsheets"]["spreadsheet"]
-    return client.open_by_url(sheet_url)
+    try:
+        scope = [
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive"
+        ]
+        creds_dict = dict(st.secrets["connections"]["gsheets"])
+        
+        # Limpeza de chaves extra que não pertencem ao JSON da Service Account
+        sheet_url = creds_dict.pop("spreadsheet", None)
+        creds_dict.pop("type", None)
+        
+        credentials = Credentials.from_service_account_info(creds_dict, scopes=scope)
+        client = gspread.authorize(credentials)
+        
+        if not sheet_url:
+            st.error("URL da folha de cálculo não encontrado em secrets.")
+            st.stop()
+            
+        return client.open_by_url(sheet_url)
+    except Exception as e:
+        st.error(f"Erro ao ligar ao Google Sheets: {e}")
+        st.stop()
 
-# Carrega o workbook do Google Sheets
+# Carrega o ficheiro Google Sheets
 doc_sheets = conectar_gsheets()
 
 # Configuração da Checklist Estrutura
@@ -52,24 +58,66 @@ CHECKLIST_ESTRUTURA = {
     ]
 }
 
-# Funções de Leitura e Escrita atualizadas para gspread
+# --- FUNÇÕES DE PERSISTÊNCIA E BACKUP ---
+
+def garantir_separador_backup(nome_backup):
+    """Garante que os separadores de backup existem na Google Sheet."""
+    try:
+        return doc_sheets.worksheet(nome_backup)
+    except gspread.exceptions.WorksheetNotFound:
+        return doc_sheets.add_worksheet(title=nome_backup, rows="1000", cols="20")
+
+def salvar_com_backup(nome_aba, df):
+    """Atualiza a aba principal e faz um backup automático de segurança."""
+    ws = doc_sheets.worksheet(nome_aba)
+    
+    # Prepara os dados limpos
+    dados = [df.columns.values.tolist()] + df.astype(str).values.tolist()
+    
+    # Atualiza a aba principal sem apagar a estrutura prévia desnecessariamente
+    ws.clear()
+    ws.update(dados)
+    
+    # Atualiza a aba de backup com carimbo de data/hora
+    try:
+        ws_bkp = garantir_separador_backup(f"{nome_aba}_Backup")
+        df_bkp = df.copy()
+        df_bkp["_data_backup"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        dados_bkp = [df_bkp.columns.values.tolist()] + df_bkp.astype(str).values.tolist()
+        ws_bkp.clear()
+        ws_bkp.update(dados_bkp)
+    except Exception as e:
+        st.warning(f"Aviso: Não foi possível atualizar o backup de {nome_aba}: {e}")
+
 def carregar_dados_sheets():
     ws_obras = doc_sheets.worksheet("Obras")
     ws_respostas = doc_sheets.worksheet("Respostas")
     
     df_obras = pd.DataFrame(ws_obras.get_all_records()).fillna("")
     df_respostas = pd.DataFrame(ws_respostas.get_all_records()).fillna("")
+    
+    # --- ARQUIVAMENTO AUTOMÁTICO POR DATA DE CORTE ---
+    hoje = date.today()
+    alterado = False
+    
+    if not df_obras.empty and "data_corte" in df_obras.columns:
+        for idx, row in df_obras.iterrows():
+            data_str = str(row["data_corte"]).strip()
+            if data_str:
+                try:
+                    dt_corte = datetime.strptime(data_str, "%Y-%m-%d").date()
+                    # Se a data de corte já passou e a obra não está marcada como arquivada
+                    if dt_corte < hoje and row.get("arquivado") != "Sim":
+                        df_obras.loc[idx, "arquivado"] = "Sim"
+                        alterado = True
+                except ValueError:
+                    pass  # Ignora formatos inválidos de data
+                    
+    # Guardar alterações caso tenha arquivado obras automaticamente
+    if alterado:
+        salvar_com_backup("Obras", df_obras)
+        
     return df_obras, df_respostas
-
-def guardar_obras_sheets(df_obras):
-    ws_obras = doc_sheets.worksheet("Obras")
-    ws_obras.clear()
-    ws_obras.update([df_obras.columns.values.tolist()] + df_obras.astype(str).values.tolist())
-
-def guardar_respostas_sheets(df_respostas):
-    ws_respostas = doc_sheets.worksheet("Respostas")
-    ws_respostas.clear()
-    ws_respostas.update([df_respostas.columns.values.tolist()] + df_respostas.astype(str).values.tolist())
 
 # Função para Gerar Relatório Resumido para E-mail
 def gerar_relatorio_email(ref_obra, df_obras, df_respostas):
@@ -79,7 +127,7 @@ def gerar_relatorio_email(ref_obra, df_obras, df_respostas):
     resp_obra = df_respostas[df_respostas["nome_ptd"] == ref_obra]
     
     total_itens = len(resp_obra)
-    feitos = sum(resp_obra["valor"].str.startswith("Feito"))
+    feitos = sum(resp_obra["valor"].astype(str).str.startswith("Feito"))
     prog = int((feitos / total_itens) * 100) if total_itens > 0 else 0
 
     relatorio = f"""Assunto: [Acompanhamento PIs/PITs] Estado do PTD - {ref_obra}
@@ -108,7 +156,7 @@ E-REDES
 """
     return relatorio
 
-# Carga inicial dos dados
+# Carga dos dados
 df_obras, df_respostas = carregar_dados_sheets()
 
 if "obra_selecionada" not in st.session_state:
@@ -124,7 +172,8 @@ if st.session_state.obra_selecionada:
         st.session_state.obra_selecionada = None
         st.rerun()
 
-with st.sidebar.expander("📦 Obras em Arquivo", expanded=False):
+# SECÇÃO DE ARQUIVO NA SIDEBAR
+with st.sidebar.expander("📦 Obras Arquivadas", expanded=False):
     df_arq = df_obras[df_obras["arquivado"] == "Sim"]
     
     if df_arq.empty:
@@ -132,18 +181,23 @@ with st.sidebar.expander("📦 Obras em Arquivo", expanded=False):
     else:
         for idx, row in df_arq.iterrows():
             ref_arq = row["nome_ptd"]
-            c_txt, c_btn = st.columns([1.8, 1.2])
-            c_txt.caption(f"📁 {ref_arq}")
+            st.markdown(f"**📁 {ref_arq}** (Corte: {row.get('data_corte', 'N/A')})")
             
-            if c_btn.button("Desarq.", key=f"desarq_side_{ref_arq}", use_container_width=True):
-                df_obras.loc[df_obras["nome_ptd"] == ref_arq, "arquivado"] = "Não"
-                guardar_obras_sheets(df_obras)
+            c_abrir, c_desarq = st.columns(2)
+            if c_abrir.button("Editar ✏️", key=f"edit_side_{ref_arq}", use_container_width=True):
+                st.session_state.obra_selecionada = ref_arq
                 st.rerun()
+                
+            if c_desarq.button("Desarq. 🔓", key=f"desarq_side_{ref_arq}", use_container_width=True):
+                df_obras.loc[df_obras["nome_ptd"] == ref_arq, "arquivado"] = "Não"
+                salvar_com_backup("Obras", df_obras)
+                st.rerun()
+            st.markdown("---")
 
 # --- DASHBOARD PRINCIPAL ---
 if st.session_state.obra_selecionada is None:
     st.title("📁 Gestão de PIs / AITs / PTDs")
-    st.subheader("Base de Dados do Google Sheets")
+    st.subheader("Painel Principal de Acompanhamento")
     st.markdown("---")
     
     with st.expander("➕ REGISTAR NOVO PTD", expanded=False):
@@ -168,7 +222,7 @@ if st.session_state.obra_selecionada is None:
                 }])
                 
                 df_obras = pd.concat([df_obras, nova_obra_df], ignore_index=True)
-                guardar_obras_sheets(df_obras)
+                salvar_com_backup("Obras", df_obras)
                 
                 campos_padrao = ["croqui", "rc", "obra_dm", "pi", "pit", "clientes", "geradores", "croqui_celas"]
                 novas_respostas = []
@@ -181,16 +235,16 @@ if st.session_state.obra_selecionada is None:
                     })
                 
                 df_respostas = pd.concat([df_respostas, pd.DataFrame(novas_respostas)], ignore_index=True)
-                guardar_respostas_sheets(df_respostas)
+                salvar_com_backup("Respostas", df_respostas)
                 
-                st.success("PTD adicionado ao Google Sheets com sucesso!")
+                st.success("PTD adicionado com sucesso e backup atualizado!")
                 st.rerun()
 
-    st.markdown("### 🏬 PTDs em Acompanhamento")
+    st.markdown("### 🏬 PTDs Ativos (Em Acompanhamento)")
     df_ativas = df_obras[df_obras["arquivado"] != "Sim"]
     
     if df_ativas.empty:
-        st.info("Nenhum PTD ativo no momento.")
+        st.info("Nenhum PTD ativo no momento. (Os PTDs com data ultrapassada foram movidos para as 'Obras Arquivadas' no menu lateral).")
     else:
         for idx, row in df_ativas.iterrows():
             ref = row["nome_ptd"]
@@ -209,13 +263,19 @@ if st.session_state.obra_selecionada is None:
                     
                 if c5.button("Arquivar 📦", key=f"btn_arq_{ref}", use_container_width=True):
                     df_obras.loc[df_obras["nome_ptd"] == ref, "arquivado"] = "Sim"
-                    guardar_obras_sheets(df_obras)
+                    salvar_com_backup("Obras", df_obras)
                     st.rerun()
 
 # --- ECRÃ DE EDIÇÃO DO PTD ---
 else:
     ref_atual = st.session_state.obra_selecionada
     st.title(f"⚡ PTD: {ref_atual}")
+    
+    # Verifica estado de arquivamento
+    e_arquivado = df_obras.loc[df_obras["nome_ptd"] == ref_atual, "arquivado"].values
+    if len(e_arquivado) > 0 and e_arquivado[0] == "Sim":
+        st.warning("⚠️ Esta obra encontra-se no Arquivo. Pode continuar a fazer alterações ou desarquivá-la no menu lateral.")
+
     st.markdown("---")
 
     with st.expander("✉️ GERAR RESUMO PARA E-MAIL", expanded=False):
@@ -249,5 +309,5 @@ else:
                         modificado = True
 
     if modificado:
-        guardar_respostas_sheets(df_respostas)
+        salvar_com_backup("Respostas", df_respostas)
         st.rerun()
