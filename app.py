@@ -11,7 +11,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# Ligar ao Google Sheets com cache
+# Conexão com Google Sheets
 @st.cache_resource(ttl=3600)
 def conectar_gsheets():
     try:
@@ -37,11 +37,11 @@ def conectar_gsheets():
 
 doc_sheets = conectar_gsheets()
 
-# Opções predefinidas para os dropdowns de cada tipo de campo
-OPCOES_RESPOSTA = {
+# Opções para os menus Dropdown (selectbox)
+OPCOES_CAMPOS = {
     "croqui": ["Pendente", "Feito", "Não Feito", "Não Aplicável"],
     "rc": ["Pendente", "Luis", "Outro", "Não Aplicável"],
-    "obra_dm": ["Pendente", "Inserido", "Não Aplicável"],
+    "obra_dm": ["Pendente", "086071/2026", "Inserido", "Não Aplicável"],
     "pi": ["Pendente", "Não Feito", "Feito e Guardado", "Feito e Submetido", "Feito e Aprovado", "Não Aplicável"],
     "pit": ["Pendente", "Não Feito", "Feito e Guardado", "Feito e Submetido", "Feito e Aprovado", "Não Aplicável"],
     "clientes": ["Pendente", "Sim", "Não", "Não Aplicável"],
@@ -49,23 +49,23 @@ OPCOES_RESPOSTA = {
     "croqui_celas": ["Pendente", "Feito", "Não Feito", "Não Aplicável"]
 }
 
-OPCOES_PADRAO_GERAL = ["Pendente", "Feito", "Não Feito", "Sim", "Não", "Feito e Aprovado", "Não Aplicável"]
+OPCOES_PADRAO = ["Pendente", "Feito", "Não Feito", "Sim", "Não", "Feito e Aprovado", "Não Aplicável"]
 
 # Estrutura Completa da Checklist
 CHECKLIST_ESTRUTURA = {
     "1. CONSTRUÇÃO CIVIL E INFRAESTRUTURA": [
-        {"id": "croqui", "texto": "Acesso direto e desimpedido a partir da via pública (Croqui)."},
-        {"id": "rc", "texto": "Responsável de Cobrança / Contacto em Obra."},
-        {"id": "obra_dm", "texto": "Número / Registo Obra DM."}
+        {"id": "croqui", "texto": "croqui - Acesso direto e desimpedido a partir da via pública (Croqui)."},
+        {"id": "rc", "texto": "rc - Responsável de Cobrança / Contacto em Obra."},
+        {"id": "obra_dm", "texto": "obra_dm - Número / Registo Obra DM."}
     ],
     "2. PROCESSOS E LICENCIAMENTO": [
-        {"id": "pi", "texto": "Processo de Instalação (PI) Feito e Aprovado."},
-        {"id": "pit", "texto": "Processo de Infraestruturas de Telecomunicações (PIT) Feito e Aprovado."}
+        {"id": "pi", "texto": "pi - Processo de Instalação (PI) Feito e Aprovado."},
+        {"id": "pit", "texto": "pit - Processo de Infraestruturas de Telecomunicações (PIT) Feito e Aprovado."}
     ],
     "3. CLIENTES E EQUIPAMENTOS AUXILIARES": [
-        {"id": "clientes", "texto": "Clientes já foram contactados / Notificados."},
-        {"id": "geradores", "texto": "Necessidade / Utilização de Geradores."},
-        {"id": "croqui_celas", "texto": "Croqui de Celas Feito e Enviado."}
+        {"id": "clientes", "texto": "clientes - Clientes já foram contactados / Notificados."},
+        {"id": "geradores", "texto": "geradores - Necessidade / Utilização de Geradores."},
+        {"id": "croqui_celas", "texto": "croqui_celas - Croqui de Celas Feito e Enviado."}
     ]
 }
 
@@ -106,7 +106,7 @@ def carregar_dados_sheets():
     hoje = date.today()
     alterado = False
     
-    # Arquivamento automático apenas se NÃO foi forçado o desarquivamento manual
+    # Verifica arquivamento automático (apenas se forcar_desarquivado != "Sim")
     if not df_obras.empty and "data_corte" in df_obras.columns:
         for idx, row in df_obras.iterrows():
             data_str = str(row["data_corte"]).strip()
@@ -161,7 +161,7 @@ E-REDES
 """
     return relatorio
 
-# Inicialização dos dados
+# Carga inicial dos dados
 df_obras, df_respostas = carregar_dados_sheets()
 
 if "obra_selecionada" not in st.session_state:
@@ -193,7 +193,7 @@ with st.sidebar.expander("📦 Obras Arquivadas", expanded=False):
                 st.rerun()
                 
             if c_desarq.button("Desarq. 🔓", key=f"desarq_side_{ref_arq}", use_container_width=True):
-                # Marca como NÃO arquivado e ativa a flag manual para não voltar a arquivar
+                # Marca a obra para sair do arquivo e não voltar automaticamente
                 df_obras.loc[df_obras["nome_ptd"] == ref_arq, "arquivado"] = "Não"
                 df_obras.loc[df_obras["nome_ptd"] == ref_arq, "forcar_desarquivado"] = "Sim"
                 salvar_com_backup("Obras", df_obras)
@@ -274,47 +274,46 @@ if st.session_state.obra_selecionada is None:
                     salvar_com_backup("Obras", df_obras)
                     st.rerun()
 
-# --- ECRÃ DE EDIÇÃO DO PTD (LAYOUT ORIGINAL RESTAURADO) ---
+# --- ECRÃ DE EDIÇÃO DO PTD (LAYOUT FIEL À IMAGEM) ---
 else:
     ref_atual = st.session_state.obra_selecionada
-    st.title(f"⚡ PTD: {ref_atual}")
     
     e_arquivado = df_obras.loc[df_obras["nome_ptd"] == ref_atual, "arquivado"].values
     if len(e_arquivado) > 0 and e_arquivado[0] == "Sim":
         st.warning("⚠️ Esta obra encontra-se no Arquivo. Pode efetuar alterações ou desarquivá-la no menu lateral.")
 
-    st.markdown("---")
-
-    with st.expander("> ✉️ GERAR RESUMO PARA E-MAIL", expanded=False):
+    # Bloco superior para gerar e-mail
+    with st.expander(" >  📄 GERAR RESUMO PARA E-MAIL", expanded=False):
         txt_email = gerar_relatorio_email(ref_atual, df_obras, df_respostas)
         st.code(txt_email, language="text")
 
     resp_obra = df_respostas[df_respostas["nome_ptd"] == ref_atual]
     modificado = False
 
+    # Renderização idêntica à imagem anexada
     for categoria, itens in CHECKLIST_ESTRUTURA.items():
-        with st.expander(f"📁 {categoria.upper()}", expanded=True):
+        with st.expander(f"📁 {categoria}", expanded=True):
             for item in itens:
                 i_id = item["id"]
                 match_idx = df_respostas[(df_respostas["nome_ptd"] == ref_atual) & (df_respostas["campo_id"] == i_id)].index
                 
                 if not match_idx.empty:
                     idx = match_idx[0]
-                    c_txt, c_est, c_obs = st.columns([4, 2.5, 3.5])
+                    col_txt, col_sel, col_obs = st.columns([5, 3, 3])
                     
-                    c_txt.markdown(f"**{i_id}** - {item['texto']}")
+                    # Nome do campo + Descrição do item em negrito
+                    col_txt.markdown(f"**{item['texto']}**")
                     
                     val_atual = str(df_respostas.loc[idx, "valor"]).strip()
-                    opcoes = OPCOES_RESPOSTA.get(i_id, OPCOES_PADRAO_GERAL)
+                    opcoes = OPCOES_CAMPOS.get(i_id, OPCOES_PADRAO)
                     
-                    # Garante que o valor atual existe na lista de opções para evitar erros de renderização
                     if val_atual and val_atual not in opcoes:
                         opcoes = [val_atual] + opcoes
-                    
+                        
                     idx_opcao = opcoes.index(val_atual) if val_atual in opcoes else 0
                     
-                    v_est = c_est.selectbox(
-                        f"Estado_{i_id}",
+                    v_est = col_sel.selectbox(
+                        f"Select_{i_id}",
                         options=opcoes,
                         index=idx_opcao,
                         key=f"sb_{ref_atual}_{i_id}",
@@ -322,9 +321,9 @@ else:
                     )
                     
                     obs_atual = str(df_respostas.loc[idx, "observacoes"])
-                    v_obs = c_obs.text_input(
+                    v_obs = col_obs.text_input(
                         f"Obs_{i_id}",
-                        value="" if obs_atual == "nan" else obs_atual,
+                        value="" if obs_atual in ["nan", "None"] else obs_atual,
                         placeholder="Observações...",
                         key=f"ti_{ref_atual}_{i_id}",
                         label_visibility="collapsed"
